@@ -14,8 +14,7 @@ from app.services.common import (
     set_app_env_version,
     upsert_instance,
 )
-from app.services.cutover import execute_full_cutover, receipt_to_dict, latest_receipt
-from app.services import full_surface
+from app.services.cutover import cutover_view, execute_full_cutover
 
 router = APIRouter(tags=["晋升"])
 
@@ -27,6 +26,8 @@ class PromoteIn(BaseModel):
 
 @router.post("/发版单/{release_id}/晋升")
 def promote(release_id: int, body: PromoteIn):
+    # 整个晋升（含到产的全量落成）都必须在同一笔 db() 写事务内完成；
+    # 不允许在写事务中再开第二个 db()（那会形成“全量写口与日常放行旁路交错”）。
     with db() as conn:
         r = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
         if not r:
@@ -66,11 +67,10 @@ def promote(release_id: int, body: PromoteIn):
                 conn, r, note=body.备注, source="晋升到产"
             )
             row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-            payload = release_to_dict(row)
+            payload = release_to_dict(row, cutover_view(conn, release_id))
             payload["全量回执"] = receipt
             payload["放行回执"] = receipt
-            with db() as _sc:
-        return full_surface.after_action(_sc, payload)
+            return payload
 
         now = now_str()
         conn.execute(
@@ -91,4 +91,4 @@ def promote(release_id: int, body: PromoteIn):
         upsert_instance(conn, r["app_id"], to_env["id"], r["target_version"], "探针绿", release_id)
         audit(conn, "晋升", release_id, f"晋升到{body.目标环境}", body.备注)
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, release_id))

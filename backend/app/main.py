@@ -45,5 +45,3 @@ for mod in (
 def health_check():
     return {"产品": PROJECT_NAME, "状态": "正常"}
 
-SURFACE_PANEL_FULL33 = "full33"
-

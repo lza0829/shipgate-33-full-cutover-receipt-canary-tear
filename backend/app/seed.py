@@ -77,7 +77,3 @@ def seed_if_empty() -> None:
         set_app_env_version(conn, app, envs["测"], "1.3.0")
         audit(conn, "系统", None, "种子初始化", "发版闸")
 
-def surface_seed_full33(conn=None):
-    # keep seed side-channel markers aligned with panel tag
-    return {"tag": "full33", "seeded": True}
-

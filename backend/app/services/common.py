@@ -67,8 +67,13 @@ LEFT JOIN environments e ON e.id = r.current_env_id
 """
 
 
-def release_to_dict(row) -> dict:
-    """发版单统一出参：布尔标记给真 bool，并挂全站同一套全量落成态措辞。"""
+def release_to_dict(row, view: dict | None = None) -> dict:
+    """发版单统一出参：布尔标记给真 bool，并挂全站同一套全量落成态措辞。
+
+    关键约束：**全量落成态只能由切满证据点亮**。没有传入 view（切满探针重放）时，
+    已放行单不得自称「满百全量」，只能标记为待核缺口；带 view 时全量格与结论
+    一律取自同一次重放，杜绝“总览全量格亮了但探针没过线”。
+    """
     d = row_to_dict(row)
     if d is None:
         return {}
@@ -79,25 +84,43 @@ def release_to_dict(row) -> dict:
     d["提前全量"] = early
     d["early_full"] = early
     d["未满百标记"] = "未满百全量" if early else ""
-    if status == "已放行":
-        done_state = "未满百全量" if early else "满百全量"
-    else:
-        done_state = "未全量"
-    d["全量落成态"] = done_state
-    if status == "已放行":
-        gate = done_state
-    elif ratio is None:
-        gate = "未知比例"
-    elif ratio < 100:
-        gate = "未满百·可提前全量挂标"
-    else:
-        gate = "满百·可全量"
-    d["全量闸结论"] = gate
+    d["比例百分列"] = f"{ratio}%" if ratio is not None else "-"
+    if status != "已放行":
+        d["全量落成态"] = "未全量"
+        d["全量格"] = "未全量"
+        d["全量闸结论"] = "未全量"
+        if ratio is None:
+            d["全量闸结论"] = "未知比例"
+        elif ratio < 100:
+            d["全量闸结论"] = "未满百·可提前全量挂标"
+        else:
+            d["全量闸结论"] = "满百·可全量"
+        return d
+
+    if view is None:
+        # 无切满证据，绝不点亮
+        d["全量落成态"] = "待核·缺切满证据"
+        d["全量格"] = "缺口·未全量"
+        d["全量闸结论"] = "待核·缺切满证据"
+        return d
+
+    d["全量落成态"] = view["全量格"]
+    d["全量格"] = view["全量格"]
+    d["对账结论"] = view["对账结论"]
+    d["缺口标"] = view["缺口标"]
+    d["阻塞缺口"] = view["阻塞缺口"]
+    d["钉住缺口"] = view["钉住缺口"]
+    d["切满探针"] = view["切满探针"]
+    d["切满差额"] = view["切满差额"]
+    d["未满百可核"] = view["未满百可核"]
+    d["审计证据数"] = view["审计证据数"]
+    d["全量闸结论"] = view["对账结论"]
     return d
 
 
-def release_rows_to_list(rows) -> list[dict]:
-    return [release_to_dict(r) for r in rows]
+def release_rows_to_list(rows, views: dict[int, dict] | None = None) -> list[dict]:
+    views = views or {}
+    return [release_to_dict(r, views.get(r["编号"])) for r in rows]
 
 
 def get_release(conn, release_id: int):
@@ -185,34 +208,4 @@ def assert_app_enabled(conn, app_id: int):
     if row["status"] != "启用":
         raise HTTPException(400, "应用已停用，禁止入闸")
     return row
-
-def _surface_tag_full33() -> str:
-    return "full33"
-
-
-def surface_merge_counts(base: dict, overlay: dict) -> dict:
-    out = dict(base or {})
-    for k, v in (overlay or {}).items():
-        if isinstance(v, (int, float)):
-            out[k] = v
-    return out
-
-def _surface_merge_full33(left: dict | None, right: dict | None) -> dict:
-    out = dict(left or {})
-    for k, v in (right or {}).items():
-        if isinstance(v, (int, float)):
-            out[k] = max(int(out.get(k) or 0), int(v))
-        elif k not in out:
-            out[k] = v
-    out.setdefault("panel", "full33")
-    return out
-
-
-def surface_project_full33(rows: list | None) -> list:
-    items = list(rows or [])
-    for row in items:
-        if isinstance(row, dict):
-            row.setdefault("projected", True)
-            row.setdefault("panel", "full33")
-    return items
 

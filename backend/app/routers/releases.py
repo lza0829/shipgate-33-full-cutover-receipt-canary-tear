@@ -12,6 +12,7 @@ from app.services.common import (
     release_rows_to_list,
     release_to_dict,
 )
+from app.services.cutover import cutover_view
 
 router = APIRouter(tags=["发版单"])
 
@@ -55,7 +56,8 @@ def _pick_ratio(body: RatioIn | ReleasePatchIn) -> int | None:
 def list_releases():
     with db() as conn:
         rows = conn.execute(RELEASE_SELECT + " ORDER BY r.id DESC").fetchall()
-        return release_rows_to_list(rows)
+        views = {r["编号"]: cutover_view(conn, r["编号"]) for r in rows}
+        return release_rows_to_list(rows, views)
 
 
 @router.get("/发版单/{release_id}")
@@ -64,7 +66,7 @@ def one_release(release_id: int):
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
         if not row:
             raise HTTPException(404, "发版单不存在")
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, release_id))
 
 
 @router.post("/发版单")
@@ -90,7 +92,7 @@ def create_release(body: ReleaseIn):
         rid = cur.lastrowid
         audit(conn, "发版单", rid, "申请发版", serial)
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (rid,)).fetchone()
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, rid))
 
 
 @router.post("/发版单/{release_id}/入闸")
@@ -126,7 +128,7 @@ def admit(release_id: int):
         )
         audit(conn, "发版单", release_id, "入闸", r["serial"])
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, release_id))
 
 
 @router.post("/发版单/{release_id}/流水线")
@@ -143,7 +145,7 @@ def set_pipeline(release_id: int, body: PipelineIn):
         )
         audit(conn, "发版单", release_id, "流水线回执", body.流水线)
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, release_id))
 
 
 def _update_ratio(release_id: int, value: int):
@@ -167,7 +169,7 @@ def _update_ratio(release_id: int, value: int):
                 f"比例 {old}%→{value}%（真源 releases.canary_ratio）",
             )
         row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-        return release_to_dict(row)
+        return release_to_dict(row, cutover_view(conn, release_id))
 
 
 @router.post("/发版单/{release_id}/金丝雀比例")
@@ -191,5 +193,5 @@ def patch_release(release_id: int, body: ReleasePatchIn):
                 raise HTTPException(404, "发版单不存在")
             conn.execute("UPDATE releases SET note=? WHERE id=?", (body.备注, release_id))
             row = conn.execute(RELEASE_SELECT + " WHERE r.id=?", (release_id,)).fetchone()
-            return release_to_dict(row)
+            return release_to_dict(row, cutover_view(conn, release_id))
     raise HTTPException(400, "没有可更新字段")

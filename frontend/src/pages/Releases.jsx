@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
+function cellBadge(cell) {
+  if (cell === '满百全量') return <span className="badge badge-ok">{cell}</span>
+  if (cell === '未满百全量') return <span className="badge badge-warn">{cell}</span>
+  if (cell === '缺口·未全量') return <span className="badge badge-danger">{cell}</span>
+  return <span className="badge badge-muted">{cell || '未全量'}</span>
+}
+
 export default function Releases() {
   const [rows, setRows] = useState([])
   const [apps, setApps] = useState([])
@@ -63,8 +69,9 @@ export default function Releases() {
       })
       const rc = r.全量回执 || {}
       setInfo(
-        `${r.发版单号} 已全量落成：${r.全量落成态}` +
-        `（比例 ${r.金丝雀比例}%，回执 ${rc.回执号 || r.全量回执号 || '-'}）`,
+        `${r.发版单号} 全量写口返回：全量格 ${r.全量格 || '-'}，切满探针` +
+        `${r.切满探针 && r.切满探针.过线 ? '过线' : '未过线（' + ((r.切满探针 && r.切满探针.未过原因) || []).join('；') + '）'}，` +
+        `比例百分列 ${r.比例百分列 || r.金丝雀比例 + '%'}，回执 ${rc.回执号 || r.全量回执号 || '-'}`,
       )
       load()
     } catch (e) { setErr(e.message) }
@@ -73,8 +80,8 @@ export default function Releases() {
     <div className="panel">
       <h2>发版单</h2>
       <p className="hint">
-        全量落成闸策略：允许未满百提前全量，但必须挂<span className="badge badge-warn">未满百全量</span>
-        可核标，比例真源不回改，回执 / 名册 / 实例 / 总览 / 对账 / 审计同笔落成。
+        全量落成闸：允许未满百提前全量，但必须挂<span className="badge badge-warn">未满百全量</span>
+        可核标；全量格只由切满探针 ∪ 全量事件 ∪ 审计证据点亮，未切满不亮满百。
       </p>
       {err && <p className="err">{err}</p>}
       {info && <p className="ok">{info}</p>}
@@ -98,20 +105,20 @@ export default function Releases() {
           <thead>
             <tr>
               <th>发版单号</th><th>应用</th><th>目标版本</th><th>状态</th>
-              <th>金丝雀比例</th><th>全量落成态</th><th>当前环境</th><th>流水线</th>
-              <th>全量回执号</th><th>操作</th>
+              <th>比例百分列</th><th>全量格</th><th>切满探针</th><th>切满差额</th>
+              <th>当前环境</th><th>流水线</th><th>全量回执号</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.编号} data-release={r.编号} data-serial={r.发版单号}>
+              <tr key={r.编号} data-release={r.编号} data-serial={r.发版单号} data-cell={r.全量格}>
                 <td>{r.发版单号}</td>
                 <td>{r.应用}</td>
                 <td>{r.目标版本}</td>
                 <td>{r.状态}</td>
                 <td>
                   <span className={r.金丝雀比例 < 100 ? 'ratio ratio-low' : 'ratio ratio-full'}>
-                    {r.金丝雀比例}%
+                    {r.比例百分列 || `${r.金丝雀比例}%`}
                   </span>
                   {r.未满百全量
                     ? <span className="badge badge-warn">未满百全量</span>
@@ -133,13 +140,15 @@ export default function Releases() {
                     </span>
                   )}
                 </td>
+                <td>{cellBadge(r.全量格 || r.全量落成态)}</td>
                 <td>
-                  {r.全量落成态 === '未满百全量'
-                    ? <span className="badge badge-warn">未满百全量</span>
-                    : r.全量落成态 === '满百全量'
-                      ? <span className="badge badge-ok">满百全量</span>
-                      : <span className="badge badge-muted">未全量</span>}
+                  {r.状态 === '已放行'
+                    ? (r.切满探针 && r.切满探针.过线
+                      ? <span className="badge badge-ok">过线</span>
+                      : <span className="badge badge-danger" title={(r.切满探针 && r.切满探针.未过原因 || []).join('；')}>未过线</span>)
+                    : <span className="muted">-</span>}
                 </td>
+                <td>{r.切满差额 ?? '-'}</td>
                 <td>{r.当前环境 || '-'}</td>
                 <td>{r.流水线}</td>
                 <td className="mono">{r.全量回执号 || '-'}</td>

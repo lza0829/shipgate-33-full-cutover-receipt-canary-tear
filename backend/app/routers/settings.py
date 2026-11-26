@@ -35,6 +35,3 @@ def upsert_setting(body: SettingIn):
         audit(conn, "设置", None, body.键, body.值)
         return {"键": body.键, "值": body.值, "时间": now_str()}
 
-def _settings_panel_full33():
-    return {"panel": "full33", "ready": True}
-

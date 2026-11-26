@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
+function cellBadge(cell) {
+  if (cell === '满百全量') return <span className="badge badge-ok">{cell}</span>
+  if (cell === '未满百全量') return <span className="badge badge-warn">{cell}</span>
+  if (cell === '缺口·未全量') return <span className="badge badge-danger">{cell}</span>
+  return <span className="badge badge-muted">{cell || '未全量'}</span>
+}
+
 export default function Promote() {
   const [rows, setRows] = useState([])
   const [rid, setRid] = useState('')
@@ -21,7 +27,8 @@ export default function Promote() {
       const r = await api(`/发版单/${rid}/晋升`, { method: 'POST', body: JSON.stringify({ 目标环境: env }) })
       if (env === '产' || r.状态 === '已放行') {
         const rc = r.全量回执 || {}
-        setInfo(`已走全量落成闸：${r.全量落成态}（比例 ${r.金丝雀比例}%，回执 ${rc.回执号 || '-'}）`)
+        const probe = r.切满探针 || {}
+        setInfo(`已走全量落成闸：全量格 ${r.全量格 || '-'}，切满探针 ${probe.过线 ? '过线' : '未过线'}，比例 ${r.比例百分列 || r.金丝雀比例 + '%'}，回执 ${rc.回执号 || '-'}`)
       }
       load()
     } catch (e) { setErr(e.message) }
@@ -33,7 +40,8 @@ export default function Promote() {
         method: 'POST', body: JSON.stringify({ 备注: '晋升页全量放行' }),
       })
       const rc = r.全量回执 || {}
-      setInfo(`${r.发版单号}：${r.全量落成态}，回执 ${rc.回执号 || r.全量回执号 || '-'}`)
+      const probe = r.切满探针 || {}
+      setInfo(`${r.发版单号}：全量格 ${r.全量格 || '-'}，切满探针 ${probe.过线 ? '过线' : '未过线'}，回执 ${rc.回执号 || r.全量回执号 || '-'}`)
       load()
     } catch (e) { setErr(e.message) }
   }
@@ -42,7 +50,8 @@ export default function Promote() {
       <h2>环境晋升</h2>
       <p className="hint">
         晋升到「产」与「全量放行」是同一个全量落成写口：未满百可提前全量，但必挂
-        <span className="badge badge-warn">未满百全量</span>可核标，不允许出现无标分裂。
+        <span className="badge badge-warn">未满百全量</span>可核标；晋升到产走同一笔事务，
+        不存在“日常晋升旁路”半截。
       </p>
       {err && <p className="err">{err}</p>}
       {info && <p className="ok">{info}</p>}
@@ -69,25 +78,21 @@ export default function Promote() {
           <thead>
             <tr>
               <th>发版单号</th><th>应用</th><th>目标版本</th><th>状态</th>
-              <th>金丝雀比例</th><th>全量落成态</th><th>当前环境</th><th>操作</th>
+              <th>比例百分列</th><th>全量格</th><th>当前环境</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.编号} data-release={r.编号}>
+              <tr key={r.编号} data-release={r.编号} data-cell={r.全量格}>
                 <td>{r.发版单号}</td>
                 <td>{r.应用}</td>
                 <td>{r.目标版本}</td>
                 <td>{r.状态}</td>
                 <td>
-                  <span className={r.金丝雀比例 < 100 ? 'ratio ratio-low' : 'ratio ratio-full'}>{r.金丝雀比例}%</span>
+                  <span className={r.金丝雀比例 < 100 ? 'ratio ratio-low' : 'ratio ratio-full'}>{r.比例百分列 || `${r.金丝雀比例}%`}</span>
                   {r.未满百全量 && <span className="badge badge-warn">未满百全量</span>}
                 </td>
-                <td>
-                  {r.全量落成态 === '未满百全量'
-                    ? <span className="badge badge-warn">未满百全量</span>
-                    : <span className="badge badge-muted">未全量</span>}
-                </td>
+                <td>{cellBadge(r.全量格 || r.全量落成态)}</td>
                 <td>{r.当前环境}</td>
                 <td><button type="button" className="full-btn" onClick={() => fullRelease(r.编号)}>全量放行</button></td>
               </tr>

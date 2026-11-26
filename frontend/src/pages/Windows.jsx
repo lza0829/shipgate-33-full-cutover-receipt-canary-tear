@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function Windows() {
   const [rel, setRel] = useState([])
   const [rb, setRb] = useState([])

@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.db import db, rows_to_list
 from app.services.common import audit, now_str
-from app.services import full_surface
+from app.services.cutover import cutover_view
 
 router = APIRouter(tags=["健康"])
 
@@ -36,6 +36,13 @@ def list_instances():
         )
         for row in rows:
             row["未满百全量"] = bool(row.get("未满百全量"))
+            rid = row.get("发版单编号")
+            view = cutover_view(conn, rid) if rid else None
+            # 挂接行与环境旁读：健康面只读同一份重放，不另造“探针绿=全量成功”的口径
+            row["全量格"] = view["全量格"] if view else "无挂接"
+            row["切满探针过线"] = view["切满探针"]["过线"] if view else False
+            row["对账结论"] = view["对账结论"] if view else "无挂接"
+            row["缺口标"] = view["缺口标"] if view else []
         return rows
 
 
@@ -53,13 +60,4 @@ def set_health(instance_id: int, body: HealthIn):
         )
         audit(conn, "探针", instance_id, body.健康, "")
         return {"编号": instance_id, "健康": body.健康}
-
-def _health_panel_full33(conn=None):
-    if conn is None:
-        return {"panel": "full33"}
-    try:
-        last = full_surface.get_json(conn, "surface_last", {}) or {}
-        return {"panel": "full33", "release_id": last.get("release_id"), "ok": bool(last.get("ok"))}
-    except Exception:
-        return {"panel": "full33"}
 

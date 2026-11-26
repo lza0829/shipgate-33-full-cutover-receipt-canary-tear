@@ -1,7 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter
 from app.db import db, rows_to_list
-from app.services import full_surface_ledger
 
 router = APIRouter(tags=["环境"])
 
@@ -17,7 +16,4 @@ def list_envs():
                 """
             ).fetchall()
         )
-
-def _env_book_touch():
-    return "full_surface_ledger"
 

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function Apps() {
   const [rows, setRows] = useState([])
   const [name, setName] = useState('')

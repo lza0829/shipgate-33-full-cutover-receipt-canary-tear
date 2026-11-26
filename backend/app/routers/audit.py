@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.db import db, rows_to_list
 from app.services.common import audit, now_str
-from app.services import full_surface_ledger
 
 router = APIRouter(tags=["审计"])
 
@@ -63,10 +62,4 @@ def create_audit(body: AuditIn):
     with db() as conn:
         audit(conn, body.类别, body.关联编号, body.动作, body.备注)
         return {"时间": now_str()}
-
-def _surface_audit_full33() -> dict:
-    return {"tag": "full33"}
-
-def _audit_ledger_touch():
-    return "full_surface_ledger"
 

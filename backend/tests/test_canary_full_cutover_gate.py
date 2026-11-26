@@ -264,3 +264,220 @@ def test_policy_declared(sg16_client):
     assert p["策略码"] == "EARLY_FULL_MARKED"
     assert c.get("/api/总览").json()["策略"]["策略码"] == "EARLY_FULL_MARKED"
     assert c.get("/api/对账").json()["策略"]["策略码"] == "EARLY_FULL_MARKED"
+
+
+# ---------- 夹具五：回执绿但比例未满（全量成功灯与切满探针撕裂） ----------
+
+def _bypass_release_to_prod(c, rid, ratio, *, receipt_no="", early=0, full_ratio=100,
+                            null_nodes=True, receipt_ratio=None, receipt_early=None):
+    """用旁路直接写出“回执已绿 / 已放行 / 名册已切”的终态，绕过全量写口。
+
+    receipt_ratio/receipt_early 可单独指定回执内容，用来造“回执与单子分叉”的假全量回执。
+    """
+    def plant(conn):
+        from app.services.common import now_str
+        prod = conn.execute("SELECT id FROM environments WHERE code='产'").fetchone()["id"]
+        target = conn.execute("SELECT target_version FROM releases WHERE id=?", (rid,)).fetchone()["target_version"]
+        app_id = conn.execute("SELECT app_id FROM releases WHERE id=?", (rid,)).fetchone()["app_id"]
+        now = now_str()
+        if receipt_no:
+            conn.execute(
+                "INSERT INTO cutover_receipts(receipt_no, release_id, ratio_at_cutover,"
+                " required_ratio, early_full, status, roster_version, switched_instances,"
+                " total_instances, detail, created_at)"
+                " VALUES (?,?,?,100,?, '全量落成', ?, 1, 2, '{}', ?)",
+                (receipt_no, rid, ratio if receipt_ratio is None else receipt_ratio,
+                 early if receipt_early is None else receipt_early, target, now),
+            )
+        conn.execute(
+            "UPDATE releases SET status='已放行', current_env_id=?, released_at=?,"
+            " canary_ratio=?, full_ratio=?, early_full=?, full_receipt_no=?"
+            " WHERE id=?",
+            (prod, now, ratio, full_ratio if not null_nodes else None, early,
+             receipt_no, rid),
+        )
+        conn.execute(
+            "INSERT INTO app_env_versions(app_id, env_id, version, updated_at) VALUES(?,?,?,?)"
+            " ON CONFLICT(app_id,env_id) DO UPDATE SET version=excluded.version",
+            (app_id, prod, target, now),
+        )
+        conn.execute(
+            "INSERT INTO instances(app_id, env_id, version, health, release_id, traffic_ratio, updated_at)"
+            " VALUES(?,?,?, '探针绿', ?, 100, ?)",
+            (app_id, prod, target, rid, now),
+        )
+    _raw(plant)
+
+
+def _side_counts(c: TestClient, rid: int) -> dict:
+    ov = c.get("/api/总览").json()
+    rows = ov["全量格对读"]
+    mine = next((x for x in rows if x["编号"] == rid), None)
+    return {"旁侧计数格": ov["旁侧计数格"], "本行": mine, "未满百全量数": ov["未满百全量数"]}
+
+
+def test_green_receipt_ratio_not_full_does_not_light_full_cell(sg16_client):
+    """回执绿 + 比例未满：全量格不得亮，切满探针必须钉缺口。"""
+    c = sg16_client
+    rid = _create_ready(c, 40)
+    _bypass_release_to_prod(c, rid, 40, receipt_no="QL-BYPASS-40", early=0, null_nodes=True)
+
+    row = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row["切满探针"]["过线"] is False
+    assert "比例未到百分百" in row["切满探针"]["未过原因"]
+    assert row["全量格"] == "缺口·未全量"
+    assert row["切满差额"] == 60
+    assert row["对账结论"] == "分裂·未满百无标"
+
+    # 发版详情 / 总览在途 / 健康 三面都不得把该单写成满百全量
+    one = c.get(f"/api/发版单/{rid}").json()
+    assert one["全量落成态"] == "缺口·未全量"
+    assert one["全量格"] == "缺口·未全量"
+    assert one["比例百分列"] == "40%"
+    side = _side_counts(c, rid)
+    assert side["本行"]["全量格"] == "缺口·未全量"
+    assert side["旁侧计数格"]["满百全量"] == 0
+    assert side["旁侧计数格"]["切满探针过线"] == 0
+
+    # 重放：补挂未满百标，但真源比例不回改，全量格只能变成「未满百全量」
+    rep = c.post("/api/对账/重放", json={"发版单编号": rid}).json()
+    assert "补挂未满百全量标" in rep["结果"][0]["修复项"]
+    row2 = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row2["真源比例"] == 40
+    assert row2["全量格"] == "未满百全量"
+    assert row2["全量格"] != "满百全量"
+    assert row2["切满探针"]["过线"] is False
+
+
+def test_full_ratio_with_stale_early_mark_is_not_reported_early(sg16_client):
+    """比例满 + 全量标缺（错误挂未满百）：全量格不得写成未满百，重放须清标。"""
+    c = sg16_client
+    rid = _create_ready(c, 100)
+    _bypass_release_to_prod(c, rid, 100, receipt_no="QL-BYPASS-100", early=1,
+                            full_ratio=100, null_nodes=False)
+
+    row = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row["对账结论"] == "分裂·满百仍挂未满百标"
+    assert row["全量格"] != "未满百全量"
+    assert row["切满探针"]["过线"] is False
+
+    rep = c.post("/api/对账/重放", json={"发版单编号": rid}).json()
+    assert "清除满百仍挂的未满百标" in rep["结果"][0]["修复项"]
+    row2 = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row2["全量格"] == "满百全量"
+    assert row2["切满探针"]["过线"] is True
+    assert row2["对账结论"] == "全量一致"
+    one = c.get(f"/api/发版单/{rid}").json()
+    assert one["全量落成态"] == "满百全量"
+
+
+def test_full_cell_and_side_counts_are_same_source(sg16_client):
+    """全量格与旁侧计数格不得双拧：未切满不得计入满百。"""
+    c = sg16_client
+    rid = _create_ready(c, 100)
+    _bypass_release_to_prod(c, rid, 100, receipt_no="QL-BYPASS-PARTIAL", early=0,
+                            full_ratio=100, null_nodes=False)
+
+    def leave_old_instance(conn):
+        from app.services.common import now_str
+        prod = conn.execute("SELECT id FROM environments WHERE code='产'").fetchone()["id"]
+        app_id = conn.execute("SELECT app_id FROM releases WHERE id=?", (rid,)).fetchone()["app_id"]
+        conn.execute(
+            "INSERT INTO instances(app_id, env_id, version, health, release_id, traffic_ratio, updated_at)"
+            " VALUES(?,?, '0.9.0-old', '探针绿', NULL, 55, ?)",
+            (app_id, prod, now_str()),
+        )
+    _raw(leave_old_instance)
+
+    row = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert "半截·实例未全切" in row["阻塞缺口"]
+    assert row["全量格"] == "缺口·未全量"
+    assert row["切满探针"]["过线"] is False
+
+    side = _side_counts(c, rid)
+    assert side["本行"]["全量格"] == "缺口·未全量"
+    assert side["本行"]["切满探针过线"] is False
+    assert side["旁侧计数格"]["满百全量"] == 0
+    assert side["旁侧计数格"]["缺口未切满"] >= 1
+    # 实例健康面（挂接行）也读同一份重放
+    inst = [x for x in c.get("/api/实例").json() if x["发版单编号"] == rid]
+    assert inst and all(x["全量格"] == "缺口·未全量" for x in inst)
+
+
+def test_bypass_half_is_pinned_and_replayed(sg16_client):
+    """日常放行旁路半截：无回执/无快照/实例未全切，全量格不亮，重放收口。"""
+    c = sg16_client
+    rid = _create_ready(c, 100)
+
+    def plant(conn):
+        from app.services.common import now_str
+        prod = conn.execute("SELECT id FROM environments WHERE code='产'").fetchone()["id"]
+        target = conn.execute("SELECT target_version FROM releases WHERE id=?", (rid,)).fetchone()["target_version"]
+        app_id = conn.execute("SELECT app_id FROM releases WHERE id=?", (rid,)).fetchone()["app_id"]
+        now = now_str()
+        conn.execute(
+            "UPDATE releases SET status='已放行', current_env_id=?, released_at=?,"
+            " full_ratio=NULL, early_full=0, full_receipt_no='' WHERE id=?",
+            (prod, now, rid),
+        )
+        conn.execute(
+            "INSERT INTO app_env_versions(app_id, env_id, version, updated_at) VALUES(?,?,?,?)"
+            " ON CONFLICT(app_id,env_id) DO UPDATE SET version=excluded.version",
+            (app_id, prod, target, now),
+        )
+        conn.execute(
+            "INSERT INTO instances(app_id, env_id, version, health, release_id, traffic_ratio, updated_at)"
+            " VALUES(?,?,?, '探针绿', ?, 100, ?)",
+            (app_id, prod, target, rid, now),
+        )
+        conn.execute(
+            "INSERT INTO instances(app_id, env_id, version, health, release_id, traffic_ratio, updated_at)"
+            " VALUES(?,?, '1.9.0-old', '探针绿', NULL, 30, ?)",
+            (app_id, prod, now),
+        )
+    _raw(plant)
+
+    row = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert {"半截·无全量回执", "半截·无全量比例快照", "半截·实例未全切"} <= set(row["阻塞缺口"])
+    assert row["全量格"] == "缺口·未全量"
+
+    rep = c.post(f"/api/发版单/{rid}/重放收口").json()
+    assert rep["修复后切满探针"]["过线"] is True
+    row2 = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row2["全量格"] == "满百全量"
+    assert row2["对账结论"] == "全量一致"
+
+
+def test_replay_exposes_fake_green_receipt(sg16_client):
+    """重放必须揭穿“回执绿但未切满”的假全量回执，并留可重放审计证据。"""
+    c = sg16_client
+    # 满百单 + 满百标不存在，但回执按 30% 早全量落（回执与单子分叉）
+    rid = _create_ready(c, 100)
+    _bypass_release_to_prod(c, rid, 100, receipt_no="QL-FAKE-30", early=0,
+                            full_ratio=100, null_nodes=False,
+                            receipt_ratio=30, receipt_early=1)
+
+    row = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert "分裂·回执与单子分叉" in row["阻塞缺口"]
+    assert row["全量格"] != "满百全量"
+
+    rep = c.post("/api/对账/重放", json={"发版单编号": rid}).json()["结果"][0]
+    assert "揭穿未切满假全量回执并更正" in rep["修复项"]
+    receipt = next(
+        r for r in c.get("/api/总览").json()["全量回执"] if r["发版单编号"] == rid
+    )
+    assert receipt["回执号"] != "QL-FAKE-30"
+    audits = c.get("/api/审计", params={"类别": "全量", "关联编号": rid}).json()
+    assert any(a["动作"] == "全量重放" for a in audits)
+    row2 = next(x for x in c.get("/api/对账").json()["全量对账"] if x["编号"] == rid)
+    assert row2["全量格"] == "满百全量"
+    assert row2["切满探针"]["过线"] is True
+
+
+def test_fixture_suite_covers_four_incident_paths(sg16_client):
+    """夹具套件必须包含本事故四路分测：回执绿比例未满 / 比例满标缺 / 双格拧花 / 旁路半截。"""
+    c = sg16_client
+    data = c.post("/api/夹具/套件").json()
+    names = {x["场景"] for x in data["结果"]}
+    assert {"回执绿比例未满", "比例满全量标缺", "全量格与旁侧格双拧", "全量与日常放行旁路半截"} <= names
+    assert data["全部通过"] is True

@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from app.db import db, rows_to_list
 from app.services.common import audit, now_str, set_app_env_version
-from app.services import full_surface
 
 router = APIRouter(tags=["应用"])
 
@@ -57,15 +56,4 @@ def patch_app(app_id: int, body: AppIn):
         )
         audit(conn, "应用", app_id, "更新应用", body.状态)
         return {"编号": app_id, "更新时间": now_str()}
-
-def _apps_panel_full33(conn=None):
-    if conn is None:
-        return {"apps_panel": "full33"}
-    try:
-        return {
-            "apps_panel": "full33",
-            "surface_ok": full_surface.get_setting(conn, "surface_ok", "0") == "1",
-        }
-    except Exception:
-        return {"apps_panel": "full33"}
 

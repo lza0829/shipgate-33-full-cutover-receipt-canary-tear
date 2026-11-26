@@ -28,6 +28,10 @@ SCENARIOS = {
     "concurrent": ("并发改比例", "scenario_concurrent"),
     "half": ("半截", "scenario_half"),
     "atomic_fail": ("原子失败", "scenario_atomic_fail"),
+    "green_ratio_gap": ("回执绿比例未满", "scenario_receipt_green_ratio_gap"),
+    "full_mark_missing": ("比例满全量标缺", "scenario_ratio_full_mark_missing"),
+    "twisted_cells": ("全量格与旁侧格双拧", "scenario_double_cell_twisted"),
+    "bypass_half": ("全量与日常放行旁路半截", "scenario_bypass_half"),
 }
 
 

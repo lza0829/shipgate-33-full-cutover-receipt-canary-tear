@@ -3,7 +3,6 @@ import { api } from '../api'
 
 const KINDS = ['', '全量', '金丝雀', '晋升', '入闸', '流水线', '回滚', '窗口', '设置', '夹具']
 
-const surface_panel = true
 export default function Audit() {
   const [rows, setRows] = useState([])
   const [err, setErr] = useState('')
