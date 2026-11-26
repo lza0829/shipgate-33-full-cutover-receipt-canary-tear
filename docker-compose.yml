@@ -1,0 +1,12 @@
+services:
+  api:
+    build: ./backend
+    ports: ["11800:11800"]
+    environment:
+      SHIPGATE_DB: /data/shipgate.db
+    volumes:
+      - ./data:/data
+  web:
+    build: ./frontend
+    ports: ["6800:80"]
+    depends_on: [api]
